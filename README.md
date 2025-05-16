@@ -2,13 +2,6 @@
 
 NOTE: rename local file pathway to render the dashboard. 
 
-
-adv_viz/                 # project root
-│
-├─ dashboard.html        # the app (open this in a browser)
-├─ clean_master.json     # raw ticket‑level data (~ MB)
-└─ README.md             # you’re here
-
 This is a A lightweight, front‑end–only dashboard for exploring Brooklyn Museum ticket sales.
 Built with HTML + CSS, D3.js for data wrangling, and Plotly.js for the five interactive charts.
 
