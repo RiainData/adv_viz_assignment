@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Museum Attendance Dashboard · v2</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+  <script src="https://unpkg.com/d3@7.8.5/dist/d3.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet" />
+  <style>
+    :root{--bg:#f7f7f9;--card:#fff;--primary:#0052cc;--shadow:0 1px 4px rgba(0,0,0,.05)}
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0;font-family:"Inter",sans-serif;background:var(--bg);color:#111;height:100%;overflow:hidden}
+    header{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:16px;height:72px;padding:0 24px;background:var(--card);box-shadow:var(--shadow)}
+    header h1{font-size:20px;font-weight:600;color:var(--primary);margin:0;white-space:nowrap}
+    .menu-btn{display:none;background:none;border:none;font-size:24px;cursor:pointer;color:var(--primary)}
+    main{display:flex;height:calc(100vh - 72px);overflow:hidden}
+    #sidebar{background:var(--card);box-shadow:1px 0 4px rgba(0,0,0,.06);width:300px;flex-shrink:0;overflow-y:auto;padding:24px 20px 32px;transition:left .3s ease}
+    #controls{display:flex;flex-direction:column;gap:18px}
+    #controls label{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:#555;margin-bottom:4px}
+    #controls select,#controls input{width:100%;padding:8px 10px;font-size:14px;border:1px solid #d0d0d5;border-radius:8px;background:#fff}
+    #applyBtn{width:100%;padding:10px 0;margin-top:4px;background:var(--primary);color:#fff;border:none;border-radius:8px;font-weight:600;cursor:pointer}
+    #content{flex:1 1 0;overflow-y:auto;padding:24px;display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:24px}
+    .card{background:var(--card);border-radius:14px;box-shadow:var(--shadow);display:flex;flex-direction:column;padding:12px 12px 4px}
+    .plot-title{font-size:15px;font-weight:600;margin:4px 0 8px 4px}
+    @media(max-width:800px){
+      #sidebar{position:fixed;top:72px;bottom:0;left:-320px;height:calc(100vh - 72px);width:280px}
+      #sidebar.open{left:0}
+      .menu-btn{display:block}
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <button id="menuToggle" class="menu-btn" aria-label="Toggle filters">☰</button>
+    <h1>Museum Attendance Dashboard</h1>
+  </header>
+
+  <main>
+    <aside id="sidebar">
+      <div id="controls">
+        <div><label for="eventSelect">Event</label><select id="eventSelect" multiple size="8"></select></div>
+        <div><label for="modeSelect">Mode of Sale</label><select id="modeSelect" multiple size="5"></select></div>
+        <div>
+          <label>Date Range</label>
+          <input type="date" id="startDate"/>
+          <input type="date" id="endDate" style="margin-top:6px;"/>
+        </div>
+        <button id="applyBtn">Apply Filters</button>
+      </div>
+    </aside>
+
+    <section id="content">
+      <div class="card"><div class="plot-title">Tickets Over Time</div><div id="timeSeries" style="height:320px"></div></div>
+      <div class="card"><div class="plot-title">Visitor Density Map</div><div id="mapPlot" style="height:400px"></div></div>
+      <div class="card"><div class="plot-title">Top ZIP Codes (Tickets)</div><div id="barPlot" style="height:400px"></div></div>
+      <div class="card"><div class="plot-title">Tickets by Mode of Sale</div><div id="piePlot" style="height:360px"></div></div>
+      <div class="card"><div class="plot-title">Ticket Quantity per Transaction</div><div id="histPlot" style="height:360px"></div></div>
+    </section>
+  </main>
+
+  <script>
+    /* ---------- CONFIG ---------- */
+    Plotly.setPlotConfig({mapboxAccessToken:"YOUR_MAPBOX_ACCESS_TOKEN"}); // replace with a real token
+    const DATA_PATH = "./clean_master.json";  // assumes JSON is in the same folder
+    /* ---------- STATE ---------- */
+    let rawData=[],filtered=[];
+    /* ---------- INITIAL LOAD ---------- */
+    d3.json(DATA_PATH)
+      .then(data=>{
+        console.log("✅ rows loaded:",data.length);
+        rawData=data;
+        populateControls();
+        applyFilters();
+      })
+      .catch(err=>console.error("💥 JSON load failed:",err));
+    /* ---------- UI HANDLERS ---------- */
+    const eventSel=d3.select("#eventSelect"),modeSel=d3.select("#modeSelect");
+    document.getElementById("applyBtn").addEventListener("click",applyFilters);
+    document.getElementById("menuToggle").addEventListener("click",()=>document.getElementById("sidebar").classList.toggle("open"));
+    function populateControls(){
+      [...new Set(rawData.map(d=>d.event_name))].forEach(e=>eventSel.append("option").text(e).attr("value",e));
+      [...new Set(rawData.map(d=>d.mode_of_sale))].forEach(m=>modeSel.append("option").text(m).attr("value",m));
+      const dates=rawData.map(d=>new Date(d.event_date));
+      d3.select("#startDate").property("value",d3.min(dates).toISOString().slice(0,10));
+      d3.select("#endDate").property("value",d3.max(dates).toISOString().slice(0,10));
+    }
+    function applyFilters(){
+      const events=[...eventSel.node().selectedOptions].map(o=>o.value);
+      const modes=[...modeSel.node().selectedOptions].map(o=>o.value);
+      const start=new Date(document.getElementById("startDate").value),
+            end=new Date(document.getElementById("endDate").value);
+      filtered=rawData.filter(d=>{
+        const inEvents=!events.length||events.includes(d.event_name),
+              inModes=!modes.length||modes.includes(d.mode_of_sale),
+              dt=new Date(d.event_date);
+        return inEvents&&inModes&&dt>=start&&dt<=end;
+      });
+      renderCharts();
+    }
+    /* ---------- RENDERERS ---------- */
+    function renderCharts(){renderTimeSeries();renderMap();renderBar();renderPie();renderHist();}
+    function renderTimeSeries(){
+      const daily=d3.rollups(filtered,v=>d3.sum(v,d=>d.ticket_quantity),d=>d.event_date.slice(0,10))
+                     .sort((a,b)=>d3.ascending(a[0],b[0]));
+      Plotly.newPlot("timeSeries",[{
+        x:daily.map(d=>d[0]),y:daily.map(d=>d[1]),type:"scatter",fill:"tozeroy",
+        line:{color:"var(--primary)"}
+      }],{margin:{t:10,r:10,l:40,b:40},yaxis:{title:"Tickets"},xaxis:{title:"Date"}},{responsive:true});
+    }
+    function renderMap(){
+      const pts=filtered.filter(d=>d.lat!=null&&d.lng!=null);
+      if(!pts.length)return;
+      Plotly.newPlot("mapPlot",[{
+        type:"densitymapbox",lat:pts.map(d=>d.lat),lon:pts.map(d=>d.lng),z:pts.map(d=>d.ticket_quantity),
+        radius:20,colorscale:"Viridis",showscale:false
+      }],{mapbox:{style:"carto-positron",center:{lat:d3.mean(pts,d=>d.lat),lon:d3.mean(pts,d=>d.lng)},zoom:9},
+          margin:{t:0,r:0,l:0,b:0}},{responsive:true});
+    }
+    function renderBar(){
+      const byZip=d3.rollups(filtered,v=>d3.sum(v,d=>d.ticket_quantity),d=>d.postal_code)
+                     .sort((a,b)=>d3.descending(a[1],b[1])).slice(0,20);
+      Plotly.newPlot("barPlot",[{
+        x:byZip.map(d=>d[0]),y:byZip.map(d=>d[1]),type:"bar",marker:{color:"var(--primary)"}
+      }],{margin:{t:10,r:10,l:40,b:60},xaxis:{title:"Postal Code",type:"category"},yaxis:{title:"Tickets"}},{responsive:true});
+    }
+    function renderPie(){
+      if(!filtered.length)return;
+      const byMode=d3.rollups(filtered,v=>d3.sum(v,d=>d.ticket_quantity),d=>d.mode_of_sale);
+      Plotly.newPlot("piePlot",[{
+        labels:byMode.map(d=>d[0]),values:byMode.map(d=>d[1]),type:"pie",
+        textinfo:"label+percent",hovertemplate:"%{label}: %{value}<extra></extra>",
+        marker:{colors:["#0052cc","#1976d2","#4dabf7","#90caf9","#bbdefb"]}
+      }],{margin:{t:10,r:10,l:10,b:10},showlegend:false},{responsive:true});
+    }
+    function renderHist(){
+      if(!filtered.length)return;
+      Plotly.newPlot("histPlot",[{
+        x:filtered.map(d=>d.ticket_quantity),type:"histogram",nbinsx:25,marker:{color:"var(--primary)"}
+      }],{margin:{t:10,r:10,l:40,b:40},xaxis:{title:"Ticket Quantity"},yaxis:{title:"Count"}},{responsive:true});
+    }
+  </script>
+</body>
+</html>
